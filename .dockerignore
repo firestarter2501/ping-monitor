@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Documentation
+README.md
+
+# Development files
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test files (if any)
+tests/
+*.test.py
+test_*.py
+
+# Logs
+*.log

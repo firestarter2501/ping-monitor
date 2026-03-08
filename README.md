@@ -107,19 +107,43 @@ python3 ping_monitor.py -c config.json -p 8080
 - **アラート時**: `[Alert] Google DNS: 3 consecutive ping losses`
 - **回復時**: `[Recovery] Google DNS: Connection restored`
 
-## Docker での利用
+## Docker で利用
 
-Docker コンテナで実行する場合は、以下のパッケージをインストールする必要があります：
+### イメージのビルド
 
-```dockerfile
-FROM ubuntu:22.04
-RUN apt-get update && apt-get install -y python3 iputils-ping ca-certificates
-COPY . /app
-WORKDIR /app
-CMD ["python3", "ping_monitor.py"]
+```bash
+docker build -t ping-monitor .
 ```
 
-**重要**: `ca-certificates` をインストールしないと Discord Webhook への HTTPS 接続が失敗します。
+### コンテナの起動
+
+```bash
+# デフォルト設定で起動（ポート 8080）
+docker run -d --name ping-monitor -p 8080:8080 ping-monitor
+
+# 設定ファイルをマウントして起動
+docker run -d --name ping-monitor \
+  -v $(pwd)/config.json:/app/config.json \
+  -p 8080:8080 ping-monitor
+```
+
+### コンテナの停止
+
+```bash
+docker stop ping-monitor
+docker rm ping-monitor
+```
+
+### 画像情報
+
+- **ベースイメージ**: Python 3.11 slim
+- **サイズ**: 約 153MB
+- **ユーザー**: 非 root ユーザー（monitor）
+- **ヘルスチェック**: 内蔵（30 秒間隔）
+
+**注意事項**:
+- Docker イメージには `ca-certificates` が含まれているため、Discord Webhook が正常に動作します
+- 設定ファイルを変更する場合は、ボリュームマウントを使用してください
 
 ## コマンドラインオプション
 
@@ -151,6 +175,8 @@ CMD ["python3", "ping_monitor.py"]
 simple-mon/
 ├── config.json              # 設定ファイル
 ├── ping_monitor.py          # メインプログラム
+├── Dockerfile               # Docker イメージ定義
+├── .dockerignore            # Docker ビルド除外ファイル
 ├── README.md                # このファイル
 └── templates/
     └── index.html           # Web 監視画面
