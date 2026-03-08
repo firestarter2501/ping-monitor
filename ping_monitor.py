@@ -334,11 +334,15 @@ class MonitorHandler(BaseHTTPRequestHandler):
 
 def main():
     """Main entry point."""
+    # Get default values from environment variables
+    config_path = os.environ.get('PING_MONITOR_CONFIG', DEFAULT_CONFIG_PATH)
+    port = int(os.environ.get('PING_MONITOR_PORT', DEFAULT_PORT))
+
     parser = argparse.ArgumentParser(description='Ping Monitor')
-    parser.add_argument('--config', '-c', default=DEFAULT_CONFIG_PATH,
-                        help=f'Path to configuration file (default: {DEFAULT_CONFIG_PATH})')
-    parser.add_argument('--port', '-p', type=int, default=DEFAULT_PORT,
-                        help=f'Port number for web server (default: {DEFAULT_PORT})')
+    parser.add_argument('--config', '-c', default=config_path,
+                        help=f'Path to configuration file (default: {config_path}, env: PING_MONITOR_CONFIG)')
+    parser.add_argument('--port', '-p', type=int, default=port,
+                        help=f'Port number for web server (default: {port}, env: PING_MONITOR_PORT)')
 
     args = parser.parse_args()
 

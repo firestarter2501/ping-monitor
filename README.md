@@ -70,6 +70,8 @@ Ping 監視プログラム。設定されたホストに対して定期的に pi
 
 ### 起動
 
+#### コマンドライン引数で指定
+
 ```bash
 # デフォルト設定（config.json, ポート 8080）
 python3 ping_monitor.py
@@ -80,6 +82,20 @@ python3 ping_monitor.py --config /path/to/config.json --port 9090
 # 短縮形
 python3 ping_monitor.py -c config.json -p 8080
 ```
+
+#### 環境変数で指定
+
+```bash
+# 環境変数で設定
+export PING_MONITOR_CONFIG=/path/to/config.json
+export PING_MONITOR_PORT=9090
+python3 ping_monitor.py
+
+# 一時的に設定して実行
+PING_MONITOR_CONFIG=/path/to/config.json PING_MONITOR_PORT=9090 python3 ping_monitor.py
+```
+
+**優先順位**: コマンドライン引数 > 環境変数 > デフォルト値
 
 ### Web 画面
 
@@ -125,6 +141,13 @@ docker run -d --name ping-monitor -p 8080:8080 ping-monitor
 docker run -d --name ping-monitor \
   -v $(pwd)/config.json:/app/config.json \
   -p 8080:8080 ping-monitor
+
+# 環境変数で設定
+docker run -d --name ping-monitor \
+  -e PING_MONITOR_CONFIG=/app/config.json \
+  -e PING_MONITOR_PORT=9090 \
+  -v $(pwd)/config.json:/app/config.json \
+  -p 9090:9090 ping-monitor
 ```
 
 ### コンテナの停止
@@ -151,6 +174,15 @@ docker rm ping-monitor
 |-----------|------|-----------|
 | `--config`, `-c` | 設定ファイルのパス | config.json |
 | `--port`, `-p` | Web サーバーのポート番号 | 8080 |
+
+## 環境変数
+
+| 環境変数 | 説明 | デフォルト |
+|---------|------|-----------|
+| `PING_MONITOR_CONFIG` | 設定ファイルのパス | config.json |
+| `PING_MONITOR_PORT` | Web サーバーのポート番号 | 8080 |
+
+**優先順位**: コマンドライン引数 > 環境変数 > デフォルト値
 
 ## 注意事項
 
