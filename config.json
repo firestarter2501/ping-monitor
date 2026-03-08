@@ -1,0 +1,19 @@
+{
+  "monitor": {
+    "interval": 5,
+    "alert_threshold": 3
+  },
+  "targets": [
+    {
+      "host": "8.8.8.8",
+      "name": "Google DNS"
+    },
+    {
+      "host": "www.example.com",
+      "name": "Example"
+    }
+  ],
+  "discord": {
+    "webhook_url": ""
+  }
+}

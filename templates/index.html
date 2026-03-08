@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ping Monitor</title>
+    <style>
+        /* CSS Variables for consistent theming */
+        :root {
+            --color-primary: #333;
+            --color-success: #28a745;
+            --color-danger: #dc3545;
+            --color-warning-bg: #ffe6e6;
+            --color-text: #333;
+            --color-text-muted: #666;
+            --color-border: #eee;
+            --color-bg: #f5f5f5;
+            --color-white: #fff;
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Reset and base styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--color-bg);
+            padding: 20px;
+            line-height: 1.6;
+            color: var(--color-text);
+        }
+
+        /* Container */
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        h1 {
+            color: var(--color-primary);
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        /* Status Table */
+        .status-table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: var(--color-white);
+            box-shadow: var(--shadow);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .status-table th {
+            background-color: var(--color-primary);
+            color: var(--color-white);
+            padding: 12px 15px;
+            text-align: left;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .status-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid var(--color-border);
+            font-size: 14px;
+        }
+
+        .status-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .status-table tr:hover {
+            background-color: #f9f9f9;
+        }
+
+        /* Row status styles */
+        .row-normal {
+            background-color: var(--color-white);
+        }
+
+        .row-alert {
+            background-color: var(--color-warning-bg);
+            color: var(--color-danger);
+        }
+
+        /* Status badge styles */
+        .status-normal {
+            color: var(--color-success);
+            font-weight: 500;
+        }
+
+        .status-alert {
+            color: var(--color-danger);
+            font-weight: 500;
+        }
+
+        /* Footer */
+        .last-update {
+            margin-top: 20px;
+            color: var(--color-text-muted);
+            font-size: 12px;
+        }
+
+        /* Loading and empty states */
+        .loading, .no-targets, .error {
+            text-align: center;
+            padding: 40px;
+            color: var(--color-text-muted);
+        }
+
+        .no-targets {
+            background-color: var(--color-white);
+            border-radius: 4px;
+            box-shadow: var(--shadow);
+        }
+
+        .error {
+            color: var(--color-danger);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Ping Monitor Status</h1>
+
+        <table class="status-table" id="status-table">
+            <thead>
+                <tr>
+                    <th>Host</th>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Lost Count</th>
+                    <th>Response (ms)</th>
+                    <th>Last Check</th>
+                </tr>
+            </thead>
+            <tbody id="status-body">
+                <tr>
+                    <td colspan="6" class="loading">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p class="last-update">
+            Last updated: <span id="last-update">-</span>
+            (Auto-refresh every 30 seconds)
+        </p>
+    </div>
+
+    <script>
+        /**
+         * Fetch and display monitoring status
+         */
+        function updateStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.getElementById('status-body');
+
+                    if (Object.keys(data).length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" class="no-targets">No targets configured</td></tr>';
+                        return;
+                    }
+
+                    // Sort by lost_count (descending), then by host name (ascending)
+                    const sortedEntries = sortStatusEntries(data);
+
+                    // Render table rows
+                    const rows = sortedEntries.map(entry => createTableRow(entry));
+                    tbody.innerHTML = rows.join('');
+
+                    // Update last update time
+                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                    document.getElementById('status-body').innerHTML =
+                        '<tr><td colspan="6" class="error">Error loading status. Please try again.</td></tr>';
+                });
+        }
+
+        /**
+         * Sort status entries by lost_count (desc) then host name (asc)
+         * @param {Object} data - Status data object
+         * @returns {Array} Sorted array of [host, info] entries
+         */
+        function sortStatusEntries(data) {
+            return Object.entries(data).sort((a, b) => {
+                if (b[1].lost_count !== a[1].lost_count) {
+                    return b[1].lost_count - a[1].lost_count;
+                }
+                return a[0].localeCompare(b[0]);
+            });
+        }
+
+        /**
+         * Create a table row HTML for a single host status
+         * @param {Array} entry - [host, info] entry
+         * @returns {string} Table row HTML
+         */
+        function createTableRow([host, info]) {
+            const rowClass = info.status === 'normal' ? 'row-normal' : 'row-alert';
+            const statusClass = info.status === 'normal' ? 'status-normal' : 'status-alert';
+            const statusText = info.status === 'normal' ? 'OK' : 'ALERT';
+
+            return `
+                <tr class="${rowClass}">
+                    <td>${escapeHtml(host)}</td>
+                    <td>${escapeHtml(info.name)}</td>
+                    <td class="${statusClass}">${statusText}</td>
+                    <td>${info.lost_count}</td>
+                    <td>${escapeHtml(info.last_response_ms)}</td>
+                    <td>${escapeHtml(info.last_check)}</td>
+                </tr>
+            `;
+        }
+
+        /**
+         * Escape HTML special characters to prevent XSS
+         * @param {string} text - Text to escape
+         * @returns {string} Escaped HTML
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initial load
+        updateStatus();
+
+        // Auto-refresh every 30 seconds
+        setInterval(updateStatus, 30000);
+    </script>
+</body>
+</html>
