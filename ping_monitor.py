@@ -4,20 +4,21 @@ Ping Monitor - Monitor hosts and send Discord webhook notifications
 
 This script monitors network hosts by sending periodic ping requests and
 sends Discord webhook notifications when hosts become unreachable.
+
+Asyncio-based implementation for concurrent ping monitoring.
 """
 
 import argparse
+import asyncio
 import gc
 import json
 import os
-import subprocess
 import threading
-import time
 import urllib.error
 import urllib.request
-import weakref
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Dict, List, Any
 
 # Constants
 DEFAULT_CONFIG_PATH = 'config.json'
@@ -29,8 +30,8 @@ DISCORD_TIMEOUT = 10  # seconds for webhook timeout
 USER_AGENT = 'PingMonitor/1.0'
 
 # Global state management
-global_status = {}
-global_lock = threading.Lock()
+global_status: Dict[str, Any] = {}
+global_lock = asyncio.Lock()
 
 
 class PingMonitor:
@@ -48,6 +49,7 @@ class PingMonitor:
         self.status = global_status
         self.lock = global_lock
         self.running = False
+        self._http_server: HTTPServer | None = None
 
         self.load_config()
 
@@ -84,8 +86,8 @@ class PingMonitor:
                 'alert_sent': False
             }
 
-    def ping_host(self, host):
-        """Send a ping to the specified host.
+    async def ping_host(self, host):
+        """Send a ping to the specified host asynchronously.
 
         Args:
             host: Hostname or IP address to ping
@@ -94,22 +96,36 @@ class PingMonitor:
             tuple: (success: bool, response_ms: float or None)
         """
         try:
-            # Use subprocess with explicit resource cleanup
-            result = subprocess.run(
-                ['ping', '-c', str(PING_PACKET_COUNT), '-W', str(PING_TIMEOUT), host],
-                capture_output=True,
-                text=True,
-                timeout=PONG_TIMEOUT
+            # Create subprocess asynchronously
+            process = await asyncio.create_subprocess_exec(
+                'ping', '-c', str(PING_PACKET_COUNT), '-W', str(PING_TIMEOUT), host,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
 
-            if result.returncode == 0:
-                # Extract output and let result be garbage collected
-                output = result.stdout
-                return self._parse_ping_response(output)
+            # Wait for completion with timeout
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=PONG_TIMEOUT
+                )
 
-            return False, None
+                if process.returncode == 0:
+                    output = stdout.decode('utf-8')
+                    return self._parse_ping_response(output)
 
-        except (subprocess.TimeoutExpired, Exception):
+                return False, None
+
+            except asyncio.TimeoutError:
+                # Kill the process on timeout
+                try:
+                    process.kill()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
+                return False, None
+
+        except Exception:
             return False, None
 
     def _parse_ping_response(self, output):
@@ -144,8 +160,8 @@ class PingMonitor:
         # Ping succeeded but couldn't parse response time
         return True, 0.0
 
-    def send_discord_notification(self, message):
-        """Send a notification to Discord webhook.
+    async def send_discord_notification(self, message):
+        """Send a notification to Discord webhook asynchronously.
 
         Args:
             message: Message content to send
@@ -179,8 +195,8 @@ class PingMonitor:
         except Exception as e:
             print(f"Discord notification failed: {e}")
 
-    def monitor_loop(self):
-        """Main monitoring loop - runs in background thread."""
+    async def monitor_loop(self):
+        """Main monitoring loop - runs concurrently using asyncio."""
         self.running = True
         print(f"Starting ping monitor (interval: {self.monitor_interval}s)")
         print(f"Monitoring {len(self.targets)} target(s)")
@@ -188,48 +204,61 @@ class PingMonitor:
         iteration_count = 0
 
         while self.running:
-            with self.lock:
+            async with self.lock:
                 targets_snapshot = list(self.targets)
 
+            # Create tasks for all targets to ping concurrently
+            tasks = []
             for target in targets_snapshot:
                 host = target['host']
                 name = target.get('name', host)
+                tasks.append(self._ping_and_update(host, name))
 
-                # Perform ping
-                success, response_ms = self.ping_host(host)
+            # Execute all pings concurrently
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Update status
-                with self.lock:
-                    if host not in self.status:
-                        continue
-
-                    if success:
-                        self._handle_ping_success(host, name, response_ms)
-                    else:
-                        self._handle_ping_failure(host, name)
-
-                    self.status[host]['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-            time.sleep(self.monitor_interval)
+            await asyncio.sleep(self.monitor_interval)
             iteration_count += 1
 
             # Periodic garbage collection every 100 iterations
             if iteration_count % 100 == 0:
                 gc.collect()
 
-    def _handle_ping_success(self, host, name, response_ms):
+    async def _ping_and_update(self, host, name):
+        """Ping a host and update its status concurrently.
+
+        Args:
+            host: Hostname or IP address to ping
+            name: Display name for the host
+        """
+        # Perform ping
+        success, response_ms = await self.ping_host(host)
+
+        # Update status
+        async with self.lock:
+            if host not in self.status:
+                return
+
+            if success:
+                await self._handle_ping_success(host, name, response_ms)
+            else:
+                await self._handle_ping_failure(host, name)
+
+            self.status[host]['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    async def _handle_ping_success(self, host, name, response_ms):
         """Handle successful ping response."""
         if self.status[host]['status'] == 'alert':
             # Recovery from alert
             if self.status[host]['alert_sent']:
-                self.send_discord_notification(f"[Recovery] {name}: Connection restored")
+                await self.send_discord_notification(f"[Recovery] {name}: Connection restored")
                 self.status[host]['alert_sent'] = False
 
         self.status[host]['status'] = 'normal'
         self.status[host]['lost_count'] = 0
         self.status[host]['last_response_ms'] = f"{response_ms:.1f}"
 
-    def _handle_ping_failure(self, host, name):
+    async def _handle_ping_failure(self, host, name):
         """Handle failed ping response."""
         self.status[host]['lost_count'] += 1
         self.status[host]['last_response_ms'] = 'N/A'
@@ -238,29 +267,50 @@ class PingMonitor:
             if self.status[host]['lost_count'] >= self.alert_threshold:
                 self.status[host]['status'] = 'alert'
                 if not self.status[host]['alert_sent']:
-                    self.send_discord_notification(
+                    await self.send_discord_notification(
                         f"[Alert] {name}: {self.status[host]['lost_count']} consecutive ping losses"
                     )
                     self.status[host]['alert_sent'] = True
 
     def start(self):
         """Start the monitor and HTTP server."""
-        # Start monitoring thread
-        monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
-        monitor_thread.start()
-
-        # Start HTTP server
-        server = HTTPServer(('0.0.0.0', self.port), MonitorHandler)
-        print(f"Web server started at http://0.0.0.0:{self.port}")
-        print("Press Ctrl+C to stop")
+        # Create event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
         try:
-            server.serve_forever()
+            # Create tasks for monitor and HTTP server
+            monitor_task = loop.create_task(self.monitor_loop())
+            http_task = loop.create_task(self._run_http_server())
+
+            # Run both tasks concurrently
+            loop.run_until_complete(asyncio.gather(monitor_task, http_task, return_exceptions=True))
         except KeyboardInterrupt:
             print("\nShutting down...")
             self.running = False
+            # Cancel all tasks
+            for task in asyncio.all_tasks(loop):
+                task.cancel()
             # Force garbage collection on shutdown
             gc.collect()
+        finally:
+            loop.close()
+
+    async def _run_http_server(self):
+        """Run HTTP server asynchronously."""
+        server = HTTPServer(('0.0.0.0', self.port), MonitorHandler)
+        self._http_server = server
+        print(f"Web server started at http://0.0.0.0:{self.port}")
+        print("Press Ctrl+C to stop")
+
+        # Run serve_forever in executor to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, server.serve_forever)
+        except Exception:
+            pass
+        finally:
+            server.server_close()
 
 
 class MonitorHandler(BaseHTTPRequestHandler):
@@ -323,13 +373,28 @@ class MonitorHandler(BaseHTTPRequestHandler):
 
     def serve_status(self):
         """Serve current status as JSON."""
-        with global_lock:
+        # HTTP handler runs in a separate thread, so we need to use run_coroutine_threadsafe
+        try:
+            loop = asyncio.get_event_loop_policy().get_event_loop()
+            # Schedule the async task in the event loop
+            future = asyncio.run_coroutine_threadsafe(_get_status_json(), loop)
+            # Wait for the result with a timeout
+            status_copy = future.result(timeout=5)
+        except Exception as e:
+            # Fallback: direct access (not thread-safe but works for read-only)
+            print(f"Warning: Using fallback status access: {e}")
             status_copy = json.dumps(dict(global_status))
 
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(status_copy.encode('utf-8'))
+
+
+async def _get_status_json():
+    """Get status as JSON string with async lock."""
+    async with global_lock:
+        return json.dumps(dict(global_status))
 
 
 def main():
